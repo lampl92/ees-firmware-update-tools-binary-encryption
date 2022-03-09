@@ -10,6 +10,23 @@ int help();
 int encrypt(int argc, char *argv[]);
 int decrypt(int argc, char *argv[]);
 
+QByteArray &operator<<(QByteArray &l, quint8 r)
+{
+    l.append(static_cast<char>(r));
+    return l;
+}
+
+QByteArray &operator<<(QByteArray &l, quint16 r)
+{
+    return l<<quint8(r>>8)<<quint8(r);
+}
+
+QByteArray &operator<<(QByteArray &l, quint32 r)
+{
+    return l<<quint16(r>>16)<<quint16(r);
+}
+
+
 int main(int argc, char *argv[])
 {
     int ret = 0;
@@ -19,13 +36,13 @@ int main(int argc, char *argv[])
         if (strcmp(argv[1], "keygen") == 0) {
             ret = keygen();
         }
-        if (strcmp(argv[1], "enc") == 0) {
+        else if (strcmp(argv[1], "enc") == 0) {
             ret = encrypt(argc - 1, &argv[1]);
         }
-        if (strcmp(argv[1], "dec") == 0) {
+        else if (strcmp(argv[1], "dec") == 0) {
             ret = decrypt(argc - 1, &argv[1]);
         }
-        if (strcmp(argv[1], "help") == 0) {
+        else {
             ret = help();
         }
     } else {
@@ -119,7 +136,21 @@ int encrypt(int argc, char *argv[])
         }
 
         QByteArray inputdata;
-        inputdata = inputFile.readAll();
+
+        /* Calculate file size and checksum */
+        uint32_t checksum = 0;
+        QByteArray fileByte = inputFile.readAll();
+        for(int i = 0; i < fileByte.count(); i++) {
+           checksum += static_cast<uint32_t>(fileByte.data()[i]);
+        }
+        checksum = 1 + ~checksum;
+        qInfo() << "filesize: " << hex <<  static_cast<quint32>(inputFile.size());
+        qInfo() << "checksum: " << hex <<  static_cast<quint32>(checksum & 0x000000FF);
+        inputdata<<quint32(inputFile.size());
+        inputdata<<quint32(static_cast<quint32>(checksum & 0x000000FF));
+
+        inputFile.seek(0);
+        inputdata.append(inputFile.readAll());
 
         auto encodeData = e.encode(inputdata, pubkeyBytes, QRSAEncryption::BlockSize::OneByte);
 
@@ -141,6 +172,7 @@ int encrypt(int argc, char *argv[])
 int decrypt(int argc, char *argv[])
 {
     int ret = 0;
+    int i;
     if (argc < 2) {
        ret = help();
     } else {
@@ -182,8 +214,7 @@ int decrypt(int argc, char *argv[])
         }
 
         QByteArray inputdata = inputFile.readAll();
-
-        auto decodeData = e.decode(inputdata, privBytes, QRSAEncryption::BlockSize::OneByte);
+        QByteArray decodeData = e.decode(inputdata, privBytes, QRSAEncryption::BlockSize::OneByte);
 
         inputFile.close();
 
@@ -191,6 +222,15 @@ int decrypt(int argc, char *argv[])
             qDebug() << "input file dont have permission";
             return 1;
         }
+
+        QByteArray fileByte;
+        for(i = 0; i < 4; i++)
+        {
+            fileByte.append(decodeData.at(i));
+        }
+        fileByte.append(decodeData.at(7));
+        qDebug() << "signature: " << fileByte.toHex(' ');
+        decodeData.remove(0, 8);
 
         outputFile.write(decodeData);
         outputFile.close();
